@@ -1,0 +1,248 @@
+---
+title: "Homework 2"
+author: "Sophia Shi"
+format:
+  html:
+    toc: true
+    toc-location: left
+    self-contained: true
+jupyter: python3
+---
+
+## Task 1
+
+We are going to return to the table of the top 100 wrestlers: https://www.cagematch.net/?id=2&view=statistics. Specifically, you are going to get the ratings/comments tables for each wrestler.
+
+```{python}
+import requests
+from bs4 import BeautifulSoup
+import pandas as pd
+import re
+import time
+
+# Define headers to avoid being blocked
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
+}
+
+# Website link
+BASE_URL = "https://www.cagematch.net"
+WRESTLER_LIST_URL = f"{BASE_URL}/?id=2&view=statistics"
+
+# Function to fetch the top 100 wrestlers' profile links
+def get_wrestler_links():
+    response = requests.get(WRESTLER_LIST_URL, headers=HEADERS)
+    # Check if the request was successful
+    if response.status_code != 200:
+        print("Failed to fetch wrestler list.")
+        return []
+    # Parse the HTML content
+    soup = BeautifulSoup(response.text, 'html.parser')
+    # Find the table containing the list of wrestlers
+    table = soup.find("table", class_="TBase")
+    # Check if the table was found
+    if not table:
+        print("Could not find the table of wrestlers.")
+        return []
+
+    # Create a list to store wrestler names and comments page links
+    wrestler_links = []
+    # Skip the header row and loop thru the remaining rows
+    for row in table.find_all("tr")[1:]:  
+        # Extract the wrestlers' names and comments page links
+        link_tag = row.find_all("td")[1].find("a")
+        # Find the pattern
+        if link_tag and "nr=" in link_tag["href"]:
+            wrestler_name = link_tag.text.strip()
+            wrestler_id = re.search(r"nr=(\d+)", link_tag["href"]).group(1)
+            # Construct the comments page URL
+            comments_url = f"{BASE_URL}/?id=2&nr={wrestler_id}&page=99"
+            wrestler_links.append((wrestler_name, comments_url))
+
+    return wrestler_links
+
+# Function to scrape comments
+def get_wrestler_comments(name, comments_url):
+    response = requests.get(comments_url, headers=HEADERS)
+    if response.status_code != 200:
+        print(f"Failed to fetch comments for {name}")
+        return []
+
+    # Parse the HTML content
+    soup = BeautifulSoup(response.text, "html.parser")
+    # Find the section containing the comments
+    comments_section = soup.find_all("div", class_="CommentContents")
+    print(f"Found {len(comments_section)} comments for {name}")
+
+    comments_data = []
+    for comment in comments_section:
+        text = comment.get_text(strip=True)
+
+        rating_match = re.match(r"^\[(\d+\.\d+)\]\s*(.*)", text)
+        # Extract rating 
+        rating = rating_match.group(1) if rating_match else "N/A"
+        # Extract text
+        comment_text = rating_match.group(2) if rating_match else text
+
+        comments_data.append([name, rating, comment_text])
+
+    return comments_data
+
+# Main function to scrape comments for all wrestlers
+def fetch_wrestler_comments():
+    wrestler_links = get_wrestler_links()
+    all_comments = []
+
+    for index, (name, url) in enumerate(wrestler_links):  
+        print(f"[{index+1}/100] Scraping {name} ...")
+        all_comments.extend(get_wrestler_comments(name, url))
+        time.sleep(2)  # Avoid being blocked
+
+    return pd.DataFrame(all_comments, columns=["Wrestler", "Rating", "Comment"])
+
+# Run the script
+df_comments = fetch_wrestler_comments()
+print(df_comments.head())
+```
+
+```{python}
+# Save to CSV
+df_comments.to_csv("/Users/yuan/Desktop/Unstructured Data Analytics/HW2/wrestler_comments.csv", index=False) 
+```
+
+## Task 2
+
+Perform any form of sentiment analysis. What is the relationship between a reviewer's sentiment and their rating?
+
+```{python}
+import pandas as pd
+# read data
+df_comments = pd.read_csv("/Users/yuan/Desktop/Unstructured Data Analytics/HW2/wrestler_comments.csv")
+
+# clean data
+df_comments = df_comments.dropna()
+
+# check foreign languages
+import langid
+
+# Function to detect language
+def detect_langid(text):
+    return langid.classify(text)[0]  # Returns language code (e.g., 'en', 'es', 'fr')
+
+# Apply to DataFrame
+df_comments["Language"] = df_comments["Comment"].apply(lambda x: detect_langid(str(x)))
+
+# Display language distribution - a lot of non-English comments
+print(df_comments["Language"].value_counts())
+```
+
+```{python}
+# Use XLM-RoBERTa for multi-lingual sentiment analysis
+from transformers import pipeline
+sentiment_model = pipeline("sentiment-analysis", model="nlptown/bert-base-multilingual-uncased-sentiment")
+
+# Function to calculate sentiment score
+def xlm_sentiment(text):
+    try:
+        # Truncate long comments
+        truncated_text = text[:500]  
+        result = sentiment_model(truncated_text)[0]
+
+        # Return sentiment score (confidence 0 to 1)
+        score = result['score']  
+        return score
+    except:
+        return None  
+
+# Apply sentiment analysis
+df_comments["Sentiment"] = df_comments["Comment"].apply(lambda x: xlm_sentiment(str(x)))
+
+# Display results
+print(df_comments.head())
+```
+
+```{python}
+# Save to CSV
+df_comments.to_csv("/Users/yuan/Desktop/Unstructured Data Analytics/HW2/df_comments_sentiment.csv", index=False) 
+```
+
+```{python}
+# Compute correlation between sentiment score and rating
+correlation = df_comments[['Rating', 'Sentiment']].corr()
+print("Correlation between Sentiment and Rating:\n", correlation)
+# This means there is a weak positive correlation between the sentiment confidence score (0-1) and the rating (1-10). A correlation of 0.29 means that as sentiment confidence increases, rating tends to increase, but not strongly. (# more highly confident positive comments - closer to 1.0, A higher score means stronger confidence in the sentiment being positive.)
+```
+
+## Task 3
+
+Perform any type of topic modeling on the comments. What are the main topics of the comments? How can you use those topics to understand what people value?
+
+```{python}
+import pandas as pd
+df_comments = pd.read_csv("/Users/yuan/Desktop/Unstructured Data Analytics/HW2/df_comments_sentiment.csv")
+
+# Keep only English comments
+df_comments = df_comments[df_comments["Language"] == "en"]
+# Check if any non-English rows remain
+print(df_comments["Language"].value_counts())
+df_comments = df_comments.reset_index(drop=True)
+```
+
+```{python}
+import pandas as pd
+import nltk
+import re
+from nltk.corpus import stopwords
+
+# Load English stopwords
+stopwords_english = set(stopwords.words("english"))
+
+# Define custom stopwords (wrestling-related words)
+custom_stopwords = {"wrestler", "match", "fight", "title", "ring", "champion", "belt"} 
+
+# Combine standard stopwords with custom stopwords
+stopwords_english.update(custom_stopwords)
+
+# Function to clean text
+def preprocess_text(text):
+    text = str(text).lower()  # Convert to lowercase
+    text = re.sub(r"[^\w\s']", " ", text)  # Remove punctuation
+    text = ' '.join([word for word in text.split() if word not in stopwords_english])  # Remove stopwords
+    return text
+```
+
+```{python}
+# Apply text preprocessing
+df_comments["Clean_Comment"] = df_comments["Comment"].apply(preprocess_text)
+```
+
+```{python}
+from sklearn.decomposition import LatentDirichletAllocation
+from sklearn.feature_extraction.text import CountVectorizer
+
+# Convert cleaned text into a bag-of-words model
+vectorizer = CountVectorizer(stop_words=list(stopwords_english), max_features=5000)
+X = vectorizer.fit_transform(df_comments["Clean_Comment"])
+
+# Apply LDA with 5 topics
+lda_model = LatentDirichletAllocation(n_components=5, random_state=42)
+lda_topics = lda_model.fit_transform(X)
+```
+
+```{python}
+# Get words for each topic
+words = vectorizer.get_feature_names_out()
+topic_words = {}
+
+# Loop through each topic in the LDA model
+for topic_idx, topic in enumerate(lda_model.components_):
+    # Get the indices of the top 10 words in the topic (highest probability)
+    top_words = [words[i] for i in topic.argsort()[-10:]]  
+    topic_words[f"Topic {topic_idx+1}"] = top_words
+
+# Create a DataFrame
+df_topics = pd.DataFrame(topic_words)
+print(df_topics)
+```
+
+By analyzing the 5 main topics derived from the LDA model, we can understand what people value in the comments. People mentioned a lot of positive words in the comments, such as "great", "best", "like", "good". This indicates that people value the wrestlers' performances and matches, praising them for their skills and entertainment value. Besides, some names of legendary wrestlers were mentioned a lot, such as "kobashi" and "misawa", indicating people are interested in greatest wrestlers  and legacy debates.

@@ -1,0 +1,611 @@
+---
+title: "UDA Final Project"
+author: "Sophia Shi"
+format:
+  html:
+    toc: true
+    toc-location: left
+    self-contained: true
+jupyter: python3
+---
+
+## Introduction
+The Florida Man phenomenon has become a famous internet meme, known for its bizarre, often absurd headlines that depict real-life events involving individuals in Florida. In this project, I will analyze the data of Florida Man and see if there is any interesting findings. By leveraging natural language processing techniques such as bigram analysis, topic modeling, and word cloud visualizations, I aim to explore the recurring themes and eccentric hedalines. The most important is to have fun. 
+
+
+## Data
+The data is from scraping the news headlines from 5 different websites.
+
+The websites are:
+1. WCJB: (https://www.wcjb.com/news/crime/)
+2. Reddit: (https://www.reddit.com/r/FloridaMan/)
+3. Fox35 Orlando: (https://www.fox35orlando.com/tag/florida-man?page=1)
+4. New York Post: (https://nypost.com/tag/florida-man/)
+5. Newsweek: (https://www.newsweek.com/topic/florida-man)
+
+### Step 1: Scrape Headlines from WCJB Crime
+```{python}
+import asyncio
+from playwright.async_api import async_playwright
+import pandas as pd
+
+async def main():
+    async with async_playwright() as p:
+        # Launch a browser and set headless=False to see the browser
+        browser = await p.chromium.launch(headless=False)
+        # Open a new browser page
+        page = await browser.new_page()
+
+        # Navigate to the WCJB crime news page
+        await page.goto("https://www.wcjb.com/news/crime/", timeout=60000)
+
+        # Initialize an empty list to store headlines
+        headlines_list = []
+
+        # Click the 'Load More' button up to 20 times
+        for i in range(20):
+            # Extract all headlines on the current page
+            for headline in await page.locator("span[data-tb-title]").all():
+                title = await headline.inner_text()  # Get the text of each headline
+                if title.strip():  # Ensure it's not an empty string
+                    headlines_list.append({"headline": title.strip()})
+
+            # Find the 'Load More' button
+            load_more_button = page.get_by_role("button", name="Load More")
+            # Check if the 'Load More' button is visible
+            if await load_more_button.is_visible():
+                # Click the button
+                await load_more_button.click()
+                # Wait for the new content to load
+                await page.wait_for_load_state("load")
+            else:
+                break
+
+        # Close the browser
+        await browser.close()
+
+        # Convert the collected headlines into a DataFrame
+        return pd.DataFrame(headlines_list)
+
+# Run the async function
+headlines_df = await main()
+print(headlines_df.head())
+```
+
+```{python}
+# Save the DataFrame to a CSV file
+headlines_df.to_csv("/Users/yuan/Desktop/Unstructured Data Analytics/Final Project/wcjb_crime.csv", index=True)
+```
+
+### Step 2: Scrape Headlines from Reddit FloridaMan community
+```{python}
+import praw # Reddit API wrapper
+import pandas as pd
+
+# Initialize Reddit with your credentials
+reddit = praw.Reddit(
+    client_id="5PREew8EPtnBX9f0W3rKng",
+    client_secret="6f25wo1u5o1-QoMY3EWOeh5p_62poA",
+    user_agent="MyRedditScraper/1.0"
+)
+
+# Access the FloridaMan subreddit
+subreddit = reddit.subreddit("FloridaMan") 
+titles = []
+
+# Fetch up to 1000 recent posts (Reddit's limit)
+for post in subreddit.new(limit=1000):
+    titles.append(post.title)
+
+# Convert to DataFrame
+reddit_df = pd.DataFrame(titles, columns=["headline"])
+print(reddit_df.head())
+
+# Save to CSV
+reddit_df.to_csv("/Users/yuan/Desktop/Unstructured Data Analytics/Final Project/reddit.csv", index=True)
+```
+
+### Step 3: Scrape Headlines from Fox35 Orlando FloridaMan
+
+```{python}
+import asyncio
+from playwright.async_api import async_playwright
+import pandas as pd
+
+async def main():
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=False)
+        page = await browser.new_page()
+
+        await page.goto("https://www.fox35orlando.com/tag/florida-man?page=1")
+
+        headlines_list = []
+
+        while True:
+            # Collect headlines
+            headlines = await page.locator("h3.title a").all()
+            for headline in headlines:
+                title = await headline.inner_text()
+                headlines_list.append({"headline": title.strip()})
+
+            # Find the "Next" button by class
+            next_button = page.locator("li.pagi-item.pagi-next a")
+
+            # Click "Next" if available
+            if await next_button.is_visible():
+                await next_button.click()
+                await asyncio.sleep(3)
+            else:
+                print("No more pages to scrape.")
+                break
+
+        await browser.close()
+        return pd.DataFrame(headlines_list)
+
+# Run the async function
+news_df = await main()
+print(news_df.head())
+
+#Save to CSV
+news_df.to_csv("/Users/yuan/Desktop/Unstructured Data Analytics/Final Project/Fox.csv", index=True)
+```
+
+### Step 4: Scrape Headlines from New York Post FloridaMan Section
+
+```{python}
+import asyncio
+from playwright.async_api import async_playwright
+import pandas as pd
+
+async def main():
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=False)
+        page = await browser.new_page()
+
+        # Go to the target page with extended timeout (60 seconds)
+        await page.goto("https://nypost.com/tag/florida-man/", timeout=60000)
+
+        headlines_list = []
+
+        while True:
+            # Extract all headlines
+            for headline in await page.locator("h3.story__headline.headline.headline--archive a").all():
+                title = await headline.inner_text()
+                if title.strip():
+                    headlines_list.append({"headline": title.strip()})
+
+            # Click 'SEE MORE STORIES' until it's gone
+            see_more_button = page.get_by_role("button", name="See More Stories")
+            if await see_more_button.is_visible():
+                await see_more_button.click()
+                await asyncio.sleep(3)
+            else:
+                break
+
+        await browser.close()
+
+        return pd.DataFrame(headlines_list)
+
+# Run and display results
+headlines_df = await main()
+print(headlines_df.head())
+
+# Save to CSV
+headlines_df.to_csv("/Users/yuan/Desktop/Unstructured Data Analytics/Final Project/nypost.csv", index=True)
+```
+
+### Step 5: Scrape Headlines from Newsweek FloridaMan Section
+
+```{python}
+import asyncio
+from playwright.async_api import async_playwright
+import pandas as pd
+
+async def main():
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=False)
+        page = await browser.new_page()
+        await page.goto("https://www.newsweek.com/topic/florida-man", timeout=60000)
+
+        headlines_list = []
+
+        while True:
+
+            # Extract headlines
+            headlines = await page.locator("article.l3 h2.h3 a").all()
+            for headline in headlines:
+                title = await headline.inner_text()
+                if title:
+                    headlines_list.append({"headline": title.strip()})
+
+            # Find the 'NEXT' button with the capitalized text
+            next_button = page.locator("li.pager-next.last a")
+            if await next_button.is_visible():
+                await next_button.click()
+                await page.wait_for_load_state("load")
+            else:
+                print("No more pages.")
+                break
+
+        await browser.close()
+        return pd.DataFrame(headlines_list)
+
+# Run and display results
+news_df = await main()
+print(news_df.head())
+
+# Save to CSV
+news_df.to_csv("/Users/yuan/Desktop/Unstructured Data Analytics/Final Project/newsweek.csv", index=True)
+```
+
+### Step 6: Combine 5 DataFrames into One
+
+```{python}
+import pandas as pd
+
+# Load data
+wcjb = pd.read_csv("/Users/yuan/Desktop/Unstructured Data Analytics/Final Project/wcjb_crime.csv")
+reddit = pd.read_csv("/Users/yuan/Desktop/Unstructured Data Analytics/Final Project/reddit.csv")
+fox = pd.read_csv("/Users/yuan/Desktop/Unstructured Data Analytics/Final Project/Fox.csv")
+newsweek = pd.read_csv("/Users/yuan/Desktop/Unstructured Data Analytics/Final Project/newsweek.csv")
+nypost = pd.read_csv("/Users/yuan/Desktop/Unstructured Data Analytics/Final Project/nypost.csv")
+
+# Combine all DataFrames
+combined_new_df = pd.concat([wcjb, reddit, fox, newsweek, nypost], ignore_index=True)
+
+# Keep only the 'headline' column
+combined_new_df = combined_new_df[['headline']]
+
+# Save to CSV
+combined_new_df.to_csv("/Users/yuan/Desktop/Unstructured Data Analytics/Final Project/combined_new.csv", index=True)
+```
+
+
+## Methods
+I used multiple methods to analyze the data. The methods include:
+1. Word Cloud Visualization
+2. Bigram Analysis
+3. Topic Modeling
+4. Headline Generation
+
+### Load the Combined Data
+
+```{python}
+import pandas as pd
+combined_new_df = pd.read_csv("/Users/yuan/Desktop/Unstructured Data Analytics/Final Project/combined_new.csv")
+```
+
+### Word Cloud Visualization
+```{python}
+from nltk.corpus import stopwords
+from wordcloud import WordCloud
+import matplotlib.pyplot as plt
+import re
+from collections import Counter
+
+# Combine all headlines into one long string
+text = " ".join(combined_new_df['headline'])
+
+# Tokenize the words
+words = re.findall(r'\b\w+\b', text.lower())  # Extract words only and convert to lowercase
+
+# Define custom stopwords
+custom_stopwords = { "charged", "say", "suspect", "gainesville", "allegedly", "officer", "deputy", "arrest", "year", "old", "officers", "convicted", "floridaman", "sheriff", "trying", "gets", "claim", "charge", "city", "petersburg"}
+
+# Count word frequencies
+word_freq = Counter(words)
+
+# Identify the top 25 most common words
+top_25_words = {word for word, _ in word_freq.most_common(25)}
+
+# Combine both stopword sets
+combined_stopwords = custom_stopwords.union(top_25_words)
+
+# Filter words excluding combined stopwords
+filtered_words = [word for word in words if word not in combined_stopwords]
+
+# Generate word cloud with filtered words
+wordcloud = WordCloud(width=800, height=400, background_color='white').generate(" ".join(filtered_words))
+
+# Display the word cloud
+plt.figure(figsize=(12, 6))
+plt.imshow(wordcloud, interpolation='bilinear')
+plt.axis("off")
+plt.show()
+```
+
+The word cloud highlights that the crime section predominantly features stories about theft, high-speed chases, violent crimes involving weapons, youth-related incidents, and drug offenses.
+
+### Bigram Analysis - "steal"
+```{python}
+import re
+import spacy
+from collections import Counter
+import pandas as pd
+import matplotlib.pyplot as plt
+from sklearn.feature_extraction.text import CountVectorizer
+
+# Load Spacy model for lemmatization
+nlp = spacy.load("en_core_web_sm")
+
+# Combine all headlines into one string
+text = " ".join(combined_new_df['headline'])
+
+# Tokenize and lemmatize words
+doc = nlp(text.lower())
+lemmatized_words = [token.lemma_ for token in doc if token.is_alpha]
+
+# Create bigrams
+vectorizer = CountVectorizer(ngram_range=(2, 2))
+X = vectorizer.fit_transform([" ".join(lemmatized_words)])
+
+# Get bigram counts
+bigram_counts = pd.DataFrame(X.toarray(), columns=vectorizer.get_feature_names_out()).sum().sort_values(ascending=False)
+
+# Define stopwords to filter out
+stopwords = {'man', 'woman', 'after', 'and', 'by', 'at', 'of', 'to', 'in', 'about', 'the', 'from', 'tampa', 'with', 'over'}
+
+# Filter bigrams containing the word 'steal'
+steal_bigrams = bigram_counts[bigram_counts.index.str.contains(r'^steal\b', case=False)]
+
+# Remove bigrams with stopwords
+filtered_steal_bigrams = steal_bigrams[~steal_bigrams.index.str.split().map(lambda x: any(word in stopwords for word in x))]
+
+# Convert to DataFrame for visualization
+steal_df = pd.DataFrame(filtered_steal_bigrams).reset_index()
+steal_df.columns = ['Bigram', 'Count']
+
+# Limit to top 25
+top_25_steal_df = steal_df.head(25)
+
+# Visualize the co-occurrence
+plt.figure(figsize=(12, 8))
+plt.barh(top_25_steal_df['Bigram'], top_25_steal_df['Count'], color='skyblue')
+plt.xlabel('Count')
+plt.title('Bigram with "steal"')
+plt.gca().invert_yaxis()
+
+# Save the plot with a transparent background
+plt.savefig("steal_cooccurrence.png", transparent=True, dpi=300)
+plt.show()
+```
+
+```{python}
+# last 25
+last_25 = steal_df.tail(25)
+plt.figure(figsize=(12, 8))
+plt.barh(last_25['Bigram'], last_25['Count'], color='skyblue')
+plt.xlabel('Count')
+plt.title('Bigram with "steal"')
+plt.gca().invert_yaxis()
+# steal_last_25 plot
+plt.savefig("steal_last25.png", transparent=True, dpi=300)
+plt.show()
+```
+
+### Bigram Analysis - "attack"
+```{python}
+import re
+import spacy
+from collections import Counter
+import pandas as pd
+import matplotlib.pyplot as plt
+from sklearn.feature_extraction.text import CountVectorizer
+
+# Load Spacy model for lemmatization
+nlp = spacy.load("en_core_web_sm")
+
+# Combine all headlines into one string
+text = " ".join(combined_new_df['headline'])
+
+# Tokenize and lemmatize words
+doc = nlp(text.lower())
+lemmatized_words = [token.lemma_ for token in doc if token.is_alpha]
+
+# Create n-grams (bigrams)
+vectorizer = CountVectorizer(ngram_range=(2, 2))
+X = vectorizer.fit_transform([" ".join(lemmatized_words)])
+
+# Get bigram counts
+bigram_counts = pd.DataFrame(X.toarray(), columns=vectorizer.get_feature_names_out()).sum().sort_values(ascending=False)
+
+# Define stopwords to filter out
+stopwords = {'man', 'woman', 'after', 'and', 'by', 'at', 'of', 'to', 'in', 'about', 'the', 'from', 'tampa', 'with', 'over'}
+
+# Filter bigrams containing the word 'attack'
+attack_bigrams = bigram_counts[bigram_counts.index.str.contains(r'\battack\b', case=False)]
+
+# Remove bigrams with stopwords
+filtered_attack_bigrams = attack_bigrams[~attack_bigrams.index.str.split().map(lambda x: any(word in stopwords for word in x))]
+
+# Convert to DataFrame for visualization
+attack_df = pd.DataFrame(filtered_attack_bigrams).reset_index()
+attack_df.columns = ['Bigram', 'Count']
+
+# Limit to top 25
+top_25_attack_df = attack_df.head(25)
+
+# Visualize the co-occurrence
+plt.figure(figsize=(12, 8))
+plt.barh(top_25_attack_df['Bigram'], top_25_attack_df['Count'], color='skyblue')
+plt.xlabel('Count')
+plt.title('Bigram with "attack"')
+plt.gca().invert_yaxis()
+
+# Save the plot with a transparent background
+plt.savefig("attack_cooccurrence.png", transparent=True, dpi=300)
+plt.show()
+```
+
+```{python}
+# last 25
+last_25 = attack_df.tail(25)
+plt.figure(figsize=(12, 8))
+plt.barh(last_25['Bigram'], last_25['Count'], color='skyblue')
+plt.xlabel('Count')
+plt.title('Bigram with "attack"')
+plt.gca().invert_yaxis()
+# steal_last_25 plot
+plt.savefig("attack_last25.png", transparent=True, dpi=300)
+plt.show()
+```
+
+### Bigram Analysis - "golf"
+```{python}
+import re
+import spacy
+from collections import Counter
+import pandas as pd
+import matplotlib.pyplot as plt
+from sklearn.feature_extraction.text import CountVectorizer
+
+# Load Spacy model for lemmatization
+nlp = spacy.load("en_core_web_sm")
+
+# Combine all headlines into one string
+text = " ".join(combined_new_df['headline'])
+
+# Tokenize and lemmatize words
+doc = nlp(text.lower())
+lemmatized_words = [token.lemma_ for token in doc if token.is_alpha]
+
+# Create n-grams (bigrams)
+vectorizer = CountVectorizer(ngram_range=(2, 2))
+X = vectorizer.fit_transform([" ".join(lemmatized_words)])
+
+# Get bigram counts
+bigram_counts = pd.DataFrame(X.toarray(), columns=vectorizer.get_feature_names_out()).sum().sort_values(ascending=False)
+
+# Define stopwords to filter out
+stopwords = {'man', 'woman', 'after', 'and', 'by', 'at', 'of', 'to', 'in', 'about', 'the', 'from', 'tampa', 'with', 'over'}
+
+# Filter bigrams containing the word 'attack'
+golf_bigrams = bigram_counts[bigram_counts.index.str.contains(r'\bgolf\b', case=False)]
+
+# Remove bigrams with stopwords
+filtered_golf_bigrams = golf_bigrams[~golf_bigrams.index.str.split().map(lambda x: any(word in stopwords for word in x))]
+
+# Convert to DataFrame for visualization
+golf_df = pd.DataFrame(filtered_golf_bigrams).reset_index()
+golf_df.columns = ['Bigram', 'Count']
+
+# Limit to top 20
+top_20_golf_df = golf_df.head(20)
+
+# Visualize the co-occurrence
+plt.figure(figsize=(12, 8))
+plt.barh(top_20_golf_df['Bigram'], top_20_golf_df['Count'], color='skyblue')
+plt.xlabel('Count')
+plt.title('Bigram with "golf"')
+plt.gca().invert_yaxis()
+
+# Save the plot with a transparent background
+plt.savefig("golf_cooccurrence.png", transparent=True, dpi=300)
+plt.show()
+```
+
+```{python}
+# Filter headlines containing "golf cart"
+golf_cart_headlines = combined_new_df[combined_new_df['headline'].str.contains(r'\bgolf cart\b', case=False, na=False)]
+```
+
+### Topic Modeling
+```{python}
+import spacy
+from nltk.corpus import stopwords
+from collections import Counter
+from sklearn.feature_extraction.text import CountVectorizer
+from sklearn.decomposition import LatentDirichletAllocation
+import pandas as pd
+import re
+
+# Load spaCy model for lemmatization
+nlp = spacy.load("en_core_web_sm")
+
+# Function to tokenize, lemmatize, and remove stopwords
+def preprocess_text(text):
+    doc = nlp(text.lower())  # Convert to lowercase and process with spaCy
+    return [token.lemma_ for token in doc if token.is_alpha and token.lemma_ not in combined_stopwords]
+
+# Define custom stopwords
+custom_stopwords = {
+    "charge", "say", "suspect", "gainesville", "allegedly", "officer", 
+    "deputy", "arrest", "year", "old", "convict", 
+    "floridaman", "sheriff", "try", "claim", "petersburg", "alachua", "marion", "city", "state", "accuse", "get", "live", "columbia", "find"
+}
+
+# Identify the top 25 most common words
+text = " ".join(combined_new_df['headline'])
+words = re.findall(r'\b\w+\b', text.lower())
+word_freq = Counter(words)
+top_25_words = {word for word, _ in word_freq.most_common(25)}
+
+# Combine stopwords (custom + top 25 frequent words + NLTK stopwords)
+combined_stopwords = set(custom_stopwords).union(top_25_words).union(set(stopwords.words('english')))
+
+# Apply lemmatization and stopword filtering
+combined_new_df['lemmatized'] = combined_new_df['headline'].apply(lambda x: " ".join(preprocess_text(x)))
+
+# Prepare text data using CountVectorizer
+vectorizer = CountVectorizer(stop_words=list(combined_stopwords), lowercase=True)
+X = vectorizer.fit_transform(combined_new_df['lemmatized'])  # Use lemmatized text
+
+# Perform LDA with 5 topics
+lda = LatentDirichletAllocation(n_components=4, random_state=42)
+lda.fit(X)
+
+# Function to display top words per topic
+def display_topics(model, feature_names, num_top_words):
+    topics = []
+    for topic_idx, topic in enumerate(model.components_):
+        top_words = ", ".join([feature_names[i] for i in topic.argsort()[:-num_top_words - 1:-1]])
+        topics.append([f"Topic {topic_idx + 1}", top_words])
+    return pd.DataFrame(topics, columns=["Topic", "Words"])
+
+# Create and display topic DataFrame
+topics_df = display_topics(lda, vectorizer.get_feature_names_out(), 10)
+pd.set_option('display.max_colwidth', None)
+display(topics_df)
+```
+
+Topic 1: Street-level crime & police searches
+Topic 2: Armed robberies & drug-related offenses
+Topic 3: Legal system & sentencing
+Topic 4: Traffic-related crimes & reckless driving
+
+### Headline Generation
+
+```{python}
+import random
+
+def generate_funny_headline():
+    # Set up Lists of words extracted from topic modeling, bigrams, and word cloud
+    locations = ["Walmart", "TJ Maxx", "Home", "Park", "Restaurant", "Gas Station", "Bar"]
+    actions = pd.concat([attack_df, steal_df])['Bigram'].tolist()
+    objects = ["golf cart", "excavator", "police car", "ambulance", "Christmas Tree"]
+    reasons = [
+        "refuses to let him sing",
+        "says he was late to a golf tournament",
+        "wanted to impress his pet alligator",
+        "because he was bored",
+        "was attempting to time-travel to the 1800s",
+        "wanted to prove Florida has the best crime stories",
+    ]
+    
+    # Construct the headline
+    headline = f"man {random.choice(actions)} with {random.choice(objects)}, {random.choice(reasons)} at {random.choice(locations)}"
+    return headline
+
+# Generate 5 headlines
+headlines = [generate_funny_headline() for _ in range(5)]
+for idx, headline in enumerate(headlines, 1):
+    print(f"{idx}. {headline}")
+```
+
+
+## Results
+The analysis of Florida Man headlines revealed several recurring themes. Some patterns are expected and some patterns are unexpected. The word cloud visualization, bigram analysis, and topic models highlighted the themes of reckless behavior and unpredictable wildlife interactions. Additionally, headline generation based on our findings produced absurd yet surprisingly realistic Florida Man scenarios, closely mimicking real-life news stories.
+
+
+## Discussion
+The Florida Man phenomenon has long been a source of internet fascination, often seen as an exaggerated stereotype of bizarre crime stories. However, our analysis suggests that this pattern is not just an online meme but a recurring trend supported by real data. Regardless, the Florida Man legend remains alive and well, continuing to provide some of the most entertaining and bewildering news stories in the US.
